@@ -987,7 +987,7 @@ defmodule SymphonyElixir.AppServerTest do
     end
   end
 
-  test "app server captures codex side output and logs it through Logger" do
+  test "app server ignores stderr side output and completes successfully" do
     test_root =
       Path.join(
         System.tmp_dir!(),
@@ -1038,19 +1038,14 @@ defmodule SymphonyElixir.AppServerTest do
       issue = %Issue{
         id: "issue-stderr",
         identifier: "MT-92",
-        title: "Capture stderr",
-        description: "Ensure codex stderr is captured and logged",
+        title: "Ignore stderr side output",
+        description: "Ensure codex stderr does not poison protocol parsing",
         state: "In Progress",
         url: "https://example.org/issues/MT-92",
         labels: ["backend"]
       }
 
-      log =
-        capture_log(fn ->
-          assert {:ok, _result} = AppServer.run(workspace, "Capture stderr log", issue)
-        end)
-
-      assert log =~ "Codex turn stream output: warning: this is stderr noise"
+      assert {:ok, _result} = AppServer.run(workspace, "Ignore stderr side output", issue)
     after
       File.rm_rf(test_root)
     end
