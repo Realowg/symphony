@@ -1166,6 +1166,8 @@ defmodule SymphonyElixir.StatusDashboard do
     end
   end
 
+  defp unwrap_codex_message_payload(message), do: message
+
   defp malformed_payload_snippet(message, payload) do
     [payload, message]
     |> Enum.find_value(fn candidate ->
@@ -1195,8 +1197,6 @@ defmodule SymphonyElixir.StatusDashboard do
       end
     end)
   end
-
-  defp unwrap_codex_message_payload(message), do: message
 
   defp humanize_codex_payload(%{} = payload) do
     case map_value(payload, ["method", :method]) do

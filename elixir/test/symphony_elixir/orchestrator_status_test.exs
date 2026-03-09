@@ -96,6 +96,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     assert snapshot_entry.last_codex_message == %{
              event: :notification,
+             payload: %{method: "some-event"},
+             raw: nil,
              message: %{method: "some-event"},
              timestamp: now
            }
