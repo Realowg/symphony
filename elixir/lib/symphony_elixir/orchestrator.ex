@@ -1053,6 +1053,8 @@ defmodule SymphonyElixir.Orchestrator do
   defp summarize_codex_update(update) do
     %{
       event: update[:event],
+      payload: update[:payload],
+      raw: update[:raw],
       message: update[:payload] || update[:raw],
       timestamp: update[:timestamp]
     }

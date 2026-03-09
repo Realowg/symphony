@@ -1169,8 +1169,15 @@ defmodule SymphonyElixir.StatusDashboard do
   defp malformed_payload_snippet(message, payload) do
     [payload, message]
     |> Enum.find_value(fn candidate ->
+      message_value =
+        case candidate do
+          %{} = value -> map_value(value, ["message", :message])
+          _ -> nil
+        end
+
       raw =
         map_value(candidate || %{}, ["raw", :raw]) ||
+          message_value ||
           map_value(candidate || %{}, ["payload", "raw"]) ||
           map_value(candidate || %{}, [:payload, :raw])
 

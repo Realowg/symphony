@@ -363,22 +363,14 @@ defmodule SymphonyElixir.Codex.AppServer do
         receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
 
       {:error, _reason} ->
-        log_non_json_stream_line(payload_string, "turn stream")
+        trimmed_payload = payload_string |> to_string() |> String.trim()
 
-        if should_emit_malformed_event?(payload_string) do
+        if should_emit_malformed_event?(trimmed_payload) do
           Logger.warning(
-            "Codex malformed turn payload candidate: #{inspect(String.slice(String.trim(payload_string), 0, @max_stream_log_bytes))}"
+            "Ignoring unparsable Codex turn payload candidate: #{inspect(String.slice(trimmed_payload, 0, @max_stream_log_bytes))}"
           )
-
-          emit_message(
-            on_message,
-            :malformed,
-            %{
-              payload: payload_string,
-              raw: payload_string
-            },
-            metadata_from_message(port, %{raw: payload_string})
-          )
+        else
+          log_non_json_stream_line(payload_string, "turn stream")
         end
 
         receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)

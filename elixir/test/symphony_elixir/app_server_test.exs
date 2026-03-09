@@ -1205,7 +1205,7 @@ defmodule SymphonyElixir.AppServerTest do
     end
   end
 
-  test "app server still emits malformed events for JSON-like malformed payloads" do
+  test "app server ignores malformed JSON-like turn lines and continues" do
     test_root =
       Path.join(
         System.tmp_dir!(),
@@ -1256,8 +1256,8 @@ defmodule SymphonyElixir.AppServerTest do
       issue = %Issue{
         id: "issue-malformed-json-like",
         identifier: "MT-94",
-        title: "Emit malformed for JSON-like parse failures",
-        description: "Ensure actual malformed JSON still surfaces as malformed",
+        title: "Ignore malformed JSON-like turn lines",
+        description: "Ensure malformed turn stream lines do not poison orchestrator status",
         state: "In Progress",
         url: "https://example.org/issues/MT-94",
         labels: ["backend"]
@@ -1267,9 +1267,10 @@ defmodule SymphonyElixir.AppServerTest do
       on_message = fn message -> send(test_pid, {:app_server_message, message}) end
 
       assert {:ok, _result} =
-               AppServer.run(workspace, "Report malformed json-like lines", issue, on_message: on_message)
+               AppServer.run(workspace, "Ignore malformed json-like lines", issue, on_message: on_message)
 
-      assert_received {:app_server_message, %{event: :malformed}}
+      refute_received {:app_server_message, %{event: :malformed}}
+      assert_received {:app_server_message, %{event: :turn_completed}}
     after
       File.rm_rf(test_root)
     end
