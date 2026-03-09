@@ -365,15 +365,17 @@ defmodule SymphonyElixir.Codex.AppServer do
       {:error, _reason} ->
         log_non_json_stream_line(payload_string, "turn stream")
 
-        emit_message(
-          on_message,
-          :malformed,
-          %{
-            payload: payload_string,
-            raw: payload_string
-          },
-          metadata_from_message(port, %{raw: payload_string})
-        )
+        if should_emit_malformed_event?(payload_string) do
+          emit_message(
+            on_message,
+            :malformed,
+            %{
+              payload: payload_string,
+              raw: payload_string
+            },
+            metadata_from_message(port, %{raw: payload_string})
+          )
+        end
 
         receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
     end
@@ -876,6 +878,17 @@ defmodule SymphonyElixir.Codex.AppServer do
       else
         Logger.debug("Codex #{stream_label} output: #{text}")
       end
+    end
+  end
+
+  defp should_emit_malformed_event?(data) do
+    data
+    |> to_string()
+    |> String.trim_leading()
+    |> case do
+      "" -> false
+      <<first::utf8, _::binary>> when first in [123, 91] -> true
+      _ -> false
     end
   end
 
