@@ -1128,6 +1128,83 @@ defmodule SymphonyElixir.AppServerTest do
     end
   end
 
+  test "app server ignores multiline stderr JSON fragments that are not protocol events" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-stderr-json-fragments-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-93B")
+      codex_binary = Path.join(test_root, "fake-codex")
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      count=0
+      while IFS= read -r _line; do
+        count=$((count + 1))
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-93b"}}}'
+            ;;
+          3)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-93b"}}}'
+            ;;
+          4)
+            printf '%s\\n' '2026-03-09T13:44:20Z ERROR codex_core::auth: Failed to refresh token: 401 Unauthorized: {' >&2
+            printf '%s\\n' '{' >&2
+            printf '%s\\n' '  "error": "expired_token"' >&2
+            printf '%s\\n' '}' >&2
+            printf '%s\\n' '{"method":"codex/event/agent_reasoning","params":{"msg":{"payload":{"summaryText":"keep going"}}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-stderr-json-fragments",
+        identifier: "MT-93B",
+        title: "Ignore stderr JSON fragments as malformed status",
+        description: "Ensure multiline stderr bodies do not poison orchestrator status",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-93B",
+        labels: ["backend"]
+      }
+
+      test_pid = self()
+      on_message = fn message -> send(test_pid, {:app_server_message, message}) end
+
+      assert {:ok, _result} =
+               AppServer.run(workspace, "Ignore multiline stderr json fragments", issue,
+                 on_message: on_message
+               )
+
+      refute_received {:app_server_message, %{event: :malformed}}
+      assert_received {:app_server_message, %{event: :notification, payload: %{"method" => "codex/event/agent_reasoning"}}}
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "app server still emits malformed events for JSON-like malformed payloads" do
     test_root =
       Path.join(

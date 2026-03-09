@@ -887,10 +887,21 @@ defmodule SymphonyElixir.Codex.AppServer do
     |> String.trim_leading()
     |> case do
       "" -> false
-      <<first::utf8, _::binary>> when first in [123, 91] -> true
-      _ -> false
+      trimmed -> protocol_fragment?(trimmed)
     end
   end
+
+  defp protocol_fragment?(<<first::utf8, _::binary>> = trimmed) when first in [123, 91] do
+    String.contains?(trimmed, [
+      "\"jsonrpc\"",
+      "\"method\"",
+      "\"id\"",
+      "\"params\"",
+      "\"result\""
+    ])
+  end
+
+  defp protocol_fragment?(_trimmed), do: false
 
   defp issue_context(%{id: issue_id, identifier: identifier}) do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"
