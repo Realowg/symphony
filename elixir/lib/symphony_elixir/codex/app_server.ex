@@ -171,7 +171,6 @@ defmodule SymphonyElixir.Codex.AppServer do
           [
             :binary,
             :exit_status,
-            :stderr_to_stdout,
             args: [~c"-lc", String.to_charlist(Config.codex_command())],
             cd: String.to_charlist(workspace),
             line: @port_line_bytes
@@ -363,14 +362,22 @@ defmodule SymphonyElixir.Codex.AppServer do
         receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
 
       {:error, _reason} ->
-        trimmed_payload = payload_string |> to_string() |> String.trim()
+        log_non_json_stream_line(payload_string, "turn stream")
 
-        if should_emit_malformed_event?(trimmed_payload) do
+        if should_emit_malformed_event?(payload_string) do
           Logger.warning(
-            "Ignoring unparsable Codex turn payload candidate: #{inspect(String.slice(trimmed_payload, 0, @max_stream_log_bytes))}"
+            "Codex malformed turn payload candidate: #{inspect(String.slice(String.trim(payload_string), 0, @max_stream_log_bytes))}"
           )
-        else
-          log_non_json_stream_line(payload_string, "turn stream")
+
+          emit_message(
+            on_message,
+            :malformed,
+            %{
+              payload: payload_string,
+              raw: payload_string
+            },
+            metadata_from_message(port, %{raw: payload_string})
+          )
         end
 
         receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
@@ -888,13 +895,9 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp protocol_fragment?(<<first::utf8, _::binary>> = trimmed) when first in [123, 91] do
-    String.contains?(trimmed, [
-      "\"jsonrpc\"",
-      "\"method\"",
-      "\"id\"",
-      "\"params\"",
-      "\"result\""
-    ])
+    String.match?(trimmed, ~r/^\{\s*"jsonrpc"\s*:/) or
+      String.match?(trimmed, ~r/^\{\s*"method"\s*:/) or
+      String.match?(trimmed, ~r/^\{\s*"id"\s*:\s*.+,\s*"(result|error)"\s*:/s)
   end
 
   defp protocol_fragment?(_trimmed), do: false
