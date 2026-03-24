@@ -987,7 +987,7 @@ defmodule SymphonyElixir.AppServerTest do
     end
   end
 
-  test "app server captures codex side output and logs it through Logger" do
+  test "app server ignores stderr side output and completes successfully" do
     test_root =
       Path.join(
         System.tmp_dir!(),
@@ -1038,19 +1038,306 @@ defmodule SymphonyElixir.AppServerTest do
       issue = %Issue{
         id: "issue-stderr",
         identifier: "MT-92",
-        title: "Capture stderr",
-        description: "Ensure codex stderr is captured and logged",
+        title: "Ignore stderr side output",
+        description: "Ensure codex stderr does not poison protocol parsing",
         state: "In Progress",
         url: "https://example.org/issues/MT-92",
         labels: ["backend"]
       }
 
-      log =
-        capture_log(fn ->
-          assert {:ok, _result} = AppServer.run(workspace, "Capture stderr log", issue)
-        end)
+      assert {:ok, _result} = AppServer.run(workspace, "Ignore stderr side output", issue)
+    after
+      File.rm_rf(test_root)
+    end
+  end
 
-      assert log =~ "Codex turn stream output: warning: this is stderr noise"
+  test "app server does not emit malformed events for non-JSON side output" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-side-output-events-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-93")
+      codex_binary = Path.join(test_root, "fake-codex")
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      count=0
+      while IFS= read -r _line; do
+        count=$((count + 1))
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-93"}}}'
+            ;;
+          3)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-93"}}}'
+            ;;
+          4)
+            printf '%s\\n' 'warning: this is stderr noise' >&2
+            printf '%s\\n' '{"method":"codex/event/agent_reasoning","params":{"msg":{"payload":{"summaryText":"keep going"}}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-side-output-events",
+        identifier: "MT-93",
+        title: "Ignore side output as malformed status",
+        description: "Ensure benign side output does not poison orchestrator status",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-93",
+        labels: ["backend"]
+      }
+
+      test_pid = self()
+      on_message = fn message -> send(test_pid, {:app_server_message, message}) end
+
+      assert {:ok, _result} =
+               AppServer.run(workspace, "Ignore stderr status noise", issue, on_message: on_message)
+
+      refute_received {:app_server_message, %{event: :malformed}}
+      assert_received {:app_server_message, %{event: :notification, payload: %{"method" => "codex/event/agent_reasoning"}}}
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server ignores multiline stderr JSON fragments that are not protocol events" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-stderr-json-fragments-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-93B")
+      codex_binary = Path.join(test_root, "fake-codex")
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      count=0
+      while IFS= read -r _line; do
+        count=$((count + 1))
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-93b"}}}'
+            ;;
+          3)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-93b"}}}'
+            ;;
+          4)
+            printf '%s\\n' '2026-03-09T13:44:20Z ERROR codex_core::auth: Failed to refresh token: 401 Unauthorized: {' >&2
+            printf '%s\\n' '{' >&2
+            printf '%s\\n' '  "error": "expired_token"' >&2
+            printf '%s\\n' '}' >&2
+            printf '%s\\n' '{"method":"codex/event/agent_reasoning","params":{"msg":{"payload":{"summaryText":"keep going"}}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-stderr-json-fragments",
+        identifier: "MT-93B",
+        title: "Ignore stderr JSON fragments as malformed status",
+        description: "Ensure multiline stderr bodies do not poison orchestrator status",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-93B",
+        labels: ["backend"]
+      }
+
+      test_pid = self()
+      on_message = fn message -> send(test_pid, {:app_server_message, message}) end
+
+      assert {:ok, _result} =
+               AppServer.run(workspace, "Ignore multiline stderr json fragments", issue,
+                 on_message: on_message
+               )
+
+      refute_received {:app_server_message, %{event: :malformed}}
+      assert_received {:app_server_message, %{event: :notification, payload: %{"method" => "codex/event/agent_reasoning"}}}
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server still emits malformed events for malformed protocol stdout" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-malformed-json-like-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-94")
+      codex_binary = Path.join(test_root, "fake-codex")
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      count=0
+      while IFS= read -r _line; do
+        count=$((count + 1))
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-94"}}}'
+            ;;
+          3)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-94"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"method":"codex/event/agent_reasoning","params":{"msg":{"payload":{"summaryText":"unterminated"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-malformed-json-like",
+        identifier: "MT-94",
+        title: "Emit malformed for malformed protocol stdout",
+        description: "Ensure actual malformed protocol JSON still surfaces as malformed",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-94",
+        labels: ["backend"]
+      }
+
+      test_pid = self()
+      on_message = fn message -> send(test_pid, {:app_server_message, message}) end
+
+      assert {:ok, _result} =
+               AppServer.run(workspace, "Report malformed json-like lines", issue, on_message: on_message)
+
+      assert_received {:app_server_message, %{event: :malformed}}
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server ignores structured non-protocol stdout diagnostics" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-non-protocol-json-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-95")
+      codex_binary = Path.join(test_root, "fake-codex")
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      count=0
+      while IFS= read -r _line; do
+        count=$((count + 1))
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-95"}}}'
+            ;;
+          3)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-95"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"id":"diagnostic","message":"warn","details":{"method":"not-a-protocol-envelope"}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-non-protocol-json",
+        identifier: "MT-95",
+        title: "Ignore structured non-protocol stdout",
+        description: "Ensure non-protocol JSON diagnostics do not surface as malformed",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-95",
+        labels: ["backend"]
+      }
+
+      test_pid = self()
+      on_message = fn message -> send(test_pid, {:app_server_message, message}) end
+
+      assert {:ok, _result} =
+               AppServer.run(workspace, "Ignore structured non-protocol diagnostics", issue,
+                 on_message: on_message
+               )
+
+      refute_received {:app_server_message, %{event: :malformed}}
+      assert_received {:app_server_message, %{event: :turn_completed}}
     after
       File.rm_rf(test_root)
     end

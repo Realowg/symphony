@@ -171,7 +171,6 @@ defmodule SymphonyElixir.Codex.AppServer do
           [
             :binary,
             :exit_status,
-            :stderr_to_stdout,
             args: [~c"-lc", String.to_charlist(Config.codex_command())],
             cd: String.to_charlist(workspace),
             line: @port_line_bytes
@@ -365,15 +364,21 @@ defmodule SymphonyElixir.Codex.AppServer do
       {:error, _reason} ->
         log_non_json_stream_line(payload_string, "turn stream")
 
-        emit_message(
-          on_message,
-          :malformed,
-          %{
-            payload: payload_string,
-            raw: payload_string
-          },
-          metadata_from_message(port, %{raw: payload_string})
-        )
+        if should_emit_malformed_event?(payload_string) do
+          Logger.warning(
+            "Codex malformed turn payload candidate: #{inspect(String.slice(String.trim(payload_string), 0, @max_stream_log_bytes))}"
+          )
+
+          emit_message(
+            on_message,
+            :malformed,
+            %{
+              payload: payload_string,
+              raw: payload_string
+            },
+            metadata_from_message(port, %{raw: payload_string})
+          )
+        end
 
         receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
     end
@@ -878,6 +883,24 @@ defmodule SymphonyElixir.Codex.AppServer do
       end
     end
   end
+
+  defp should_emit_malformed_event?(data) do
+    data
+    |> to_string()
+    |> String.trim_leading()
+    |> case do
+      "" -> false
+      trimmed -> protocol_fragment?(trimmed)
+    end
+  end
+
+  defp protocol_fragment?(<<first::utf8, _::binary>> = trimmed) when first in [123, 91] do
+    String.match?(trimmed, ~r/^\{\s*"jsonrpc"\s*:/) or
+      String.match?(trimmed, ~r/^\{\s*"method"\s*:/) or
+      String.match?(trimmed, ~r/^\{\s*"id"\s*:\s*.+,\s*"(result|error)"\s*:/s)
+  end
+
+  defp protocol_fragment?(_trimmed), do: false
 
   defp issue_context(%{id: issue_id, identifier: identifier}) do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"

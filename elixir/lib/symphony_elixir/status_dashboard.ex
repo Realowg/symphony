@@ -1146,7 +1146,15 @@ defmodule SymphonyElixir.StatusDashboard do
   defp humanize_codex_event(:startup_failed, message, _payload), do: "startup failed: #{format_reason(message)}"
   defp humanize_codex_event(:turn_failed, _message, payload), do: humanize_codex_method("turn/failed", payload)
   defp humanize_codex_event(:turn_cancelled, _message, _payload), do: "turn cancelled"
-  defp humanize_codex_event(:malformed, _message, _payload), do: "malformed JSON event from codex"
+  defp humanize_codex_event(:malformed, message, payload) do
+    snippet = malformed_payload_snippet(message, payload)
+
+    if snippet do
+      "malformed JSON event from codex: #{snippet}"
+    else
+      "malformed JSON event from codex"
+    end
+  end
   defp humanize_codex_event(_event, _message, _payload), do: nil
 
   defp unwrap_codex_message_payload(%{} = message) do
@@ -1159,6 +1167,36 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp unwrap_codex_message_payload(message), do: message
+
+  defp malformed_payload_snippet(message, payload) do
+    [payload, message]
+    |> Enum.find_value(fn candidate ->
+      message_value =
+        case candidate do
+          %{} = value -> map_value(value, ["message", :message])
+          _ -> nil
+        end
+
+      raw =
+        map_value(candidate || %{}, ["raw", :raw]) ||
+          message_value ||
+          map_value(candidate || %{}, ["payload", "raw"]) ||
+          map_value(candidate || %{}, [:payload, :raw])
+
+      case raw do
+        value when is_binary(value) ->
+          value
+          |> String.trim()
+          |> case do
+            "" -> nil
+            trimmed -> String.slice(trimmed, 0, 80)
+          end
+
+        _ ->
+          nil
+      end
+    end)
+  end
 
   defp humanize_codex_payload(%{} = payload) do
     case map_value(payload, ["method", :method]) do
